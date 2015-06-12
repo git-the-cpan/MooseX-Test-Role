@@ -1,6 +1,6 @@
 package MooseX::Test::Role;
 
-our $VERSION = '0.06';
+our $VERSION = '0.07';
 
 use strict;
 use warnings;
@@ -93,6 +93,8 @@ sub _required_methods {
 sub _derive_role_type {
     my $role = shift;
 
+    try_load_class($role);
+
     if ($role->can('meta') && $role->meta()->isa('Moose::Meta::Role')) {
         # Also covers newer Moo::Roles
         return 'Moose::Role';
@@ -159,6 +161,15 @@ sub _add_methods {
     $meta = Moose::Meta::Class->create($package) if $role_type eq 'Moose::Role';
 
     while ( my ( $method, $subref ) = each(%{$methods}) ) {
+        # This allows us to have scalar values without an anonymous sub in the
+        # definition, similar to Moose's default values. We need to make a lexical
+        # copy of $subref so we do not build a circle where we return itself as a
+        # coderef later on.
+        if ( !ref $subref ) {
+            my $value = $subref;
+            $subref = sub { $value };
+        }
+
         if ($meta) {
             $meta->add_method($method => $subref);
         }
@@ -198,18 +209,20 @@ MooseX::Test::Role - Test functions for Moose roles
 =head1 SYNOPSIS
 
     use MooseX::Test::Role;
-    use Test::More tests => 2;
+    use Test::More tests => 3;
 
     requires_ok('MyRole', qw/method1 method2/);
 
     my $consumer = consuming_object(
         'MyRole',
         methods => {
-            method1 => sub { 1 }
+            method1 => 1,
+            method2 => sub { shift->method1() },
         }
     );
     ok( $consumer->myrole_method );
     is( $consumer->method1, 1 );
+    is( $consumer->method2, 1 );
 
     my $consuming_class = consuming_class('MyRole');
     ok( $consuming_class->class_method() );
@@ -288,6 +301,17 @@ methods, or to add additional methods, specify the name and a coderef:
         method1 => sub { 'one' },
         method2 => sub { 'two' },
         required_method => sub { 'required' },
+    );
+
+For methods that should just return a fixed scalar value, you can ommit the
+coderef.
+
+    consuming_class('MyRole',
+        method1    => 'one',
+        method_uc1 => sub {
+            my ($self) = @_;
+            lc $self->one;
+        },
     );
 
 =item C<consuming_object($role, methods => \%methods)>
